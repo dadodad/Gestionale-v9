@@ -49,10 +49,11 @@ function getPeriodJobs(){let y=document.getElementById('fy')?.value||'all',m=doc
 function updateDash(){
   let js=getPeriodJobs();
   let filter=document.getElementById('fclient')?.value||'all';
-  let subMode=filter.startsWith('s:'), subId=subMode?filter.slice(2):'';
+  let subMode=filter.startsWith('s:'), clientMode=filter.startsWith('c:'), selectedId=(subMode||clientMode)?filter.slice(2):'';
+  let selectedJobs=clientMode ? js.filter(j=>j.clientId===selectedId) : js;
   let selectedInts=subMode
-    ? db.interventions.filter(i=>i.subclientId===subId && js.some(j=>j.id===i.jobId))
-    : db.interventions.filter(i=>js.some(j=>j.id===i.jobId));
+    ? db.interventions.filter(i=>i.subclientId===selectedId && selectedJobs.some(j=>j.id===i.jobId))
+    : db.interventions.filter(i=>selectedJobs.some(j=>j.id===i.jobId));
   let tot,sp,tax,gain,invGain,noinvGain,payments,toCollect;
   if(subMode){
     // Il sottocliente deve filtrare SOLO gli importi degli interventi.
@@ -65,9 +66,9 @@ function updateDash(){
     payments=null; toCollect=null; invGain=null; noinvGain=null;
   }else{
     // Il cliente deve filtrare l'importo complessivo dei lavori.
-    tot=js.reduce((a,j)=>a+jobTotal(j),0);
-    sp=js.reduce((a,j)=>a+jobExpenses(j),0);
-    tax=js.reduce((a,j)=>a+jobTax(j),0);
+    tot=selectedJobs.reduce((a,j)=>a+jobTotal(j),0);
+    sp=selectedJobs.reduce((a,j)=>a+jobExpenses(j),0);
+    tax=selectedJobs.reduce((a,j)=>a+jobTax(j),0);
     gain=tot-sp-tax;
     payments=js.reduce((a,j)=>a+jobPayments(j),0);
     toCollect=tot-payments;
