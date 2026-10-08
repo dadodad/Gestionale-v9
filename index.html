@@ -8,7 +8,7 @@
 .intervention-row{display:grid;grid-template-columns:1fr 1.4fr 1fr;gap:8px;padding:11px 10px;border-bottom:1px solid #eef0f3;align-items:center;font-size:14px}
 .intervention-row:last-child{border-bottom:0}.intervention-head{background:#f8fafc;font-size:12px;color:#6b7280}
 @media(max-width:520px){.intervention-row{grid-template-columns:.9fr 1.2fr 1fr;font-size:13px;padding:10px 7px}}
-</style></head><body>
+.client-main{font-size:15px;font-weight:800}.client-location{font-size:13px;color:#6b7280;margin-top:3px}.status-closed{display:inline-block;padding:3px 7px;border-radius:999px;background:#dcfce7;color:#166534;font-size:11px;font-weight:700}\n</style></head><body>
 <header><div class="brand">Gestione Interventi</div><input id="globalSearch" class="search" placeholder="🔎 Cerca interventi, clienti, sottoclienti..."></header>
 <main class="main" id="app"></main>
 <button class="fab" id="fab" type="button" aria-label="Nuovo lavoro">＋</button>
@@ -19,23 +19,47 @@
 const KEY='gestionale_interventi_v2';
 const uid=()=>('id_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,9));
 let db=JSON.parse(localStorage.getItem(KEY)||'null')||{clients:[],cats:[],jobs:[],interventions:[],expenses:[],payments:[],seqJob:0,seqInt:0};db.jobs.forEach(j=>{if(typeof j.invoice!=='boolean')j.invoice=false;if(typeof j.invoiceNo!=='string')j.invoiceNo='';if(typeof j.invoiceDate!=='string')j.invoiceDate='';if(typeof j.taxRate!=='number')j.taxRate=0;if(typeof j.fixed!=='boolean')j.fixed=false;if(typeof j.status!=='string')j.status='Aperto'});
-const save=()=>localStorage.setItem(KEY,JSON.stringify(db));
+let IDX={clients:new Map(),jobs:new Map(),cats:new Map(),expensesByInt:new Map(),paymentsByJob:new Map(),jobTotal:new Map(),jobExpenses:new Map(),jobPayments:new Map()};
+function rebuildIndexes(){
+  IDX.clients=new Map(db.clients.map(x=>[x.id,x]));
+  IDX.jobs=new Map(db.jobs.map(x=>[x.id,x]));
+  IDX.cats=new Map(db.cats.map(x=>[x.id,x]));
+  IDX.expensesByInt=new Map();
+  (db.expenses||[]).forEach(e=>{if(!IDX.expensesByInt.has(e.intId))IDX.expensesByInt.set(e.intId,[]);IDX.expensesByInt.get(e.intId).push(e)});
+  IDX.paymentsByJob=new Map();
+  (db.payments||[]).forEach(p=>{if(!IDX.paymentsByJob.has(p.jobId))IDX.paymentsByJob.set(p.jobId,[]);IDX.paymentsByJob.get(p.jobId).push(p)});
+  IDX.jobTotal=new Map();
+  (db.interventions||[]).forEach(i=>IDX.jobTotal.set(i.jobId,(IDX.jobTotal.get(i.jobId)||0)+(Number(i.cost)||0)));
+  IDX.jobExpenses=new Map();
+  (db.expenses||[]).forEach(e=>IDX.jobExpenses.set(e.jobId,(IDX.jobExpenses.get(e.jobId)||0)+(Number(e.amount)||0)));
+  IDX.jobPayments=new Map();
+  (db.payments||[]).forEach(p=>IDX.jobPayments.set(p.jobId,(IDX.jobPayments.get(p.jobId)||0)+(Number(p.amount)||0)));
+}
+let refreshTimer=null;
+function save(){
+  rebuildIndexes();
+  localStorage.setItem(KEY,JSON.stringify(db));
+  clearTimeout(refreshTimer);
+  refreshTimer=setTimeout(()=>{
+    if(!document.getElementById('modal')?.classList.contains('open')) render();
+  },80);
+}
 const euro=n=>(Number(n)||0).toLocaleString('it-IT',{style:'currency',currency:'EUR'});
 const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
 function yearFilter(){let y=new Date().getFullYear();return `<select id="fy"><option value="all">Tutti gli anni</option>${[y-2,y-1,y,y+1].map(x=>`<option>${x}</option>`).join('')}</select>`}
 function monthFilter(){return `<select id="fm"><option value="all">Tutti i mesi</option>${['Gennaio','Febbraio','Marzo','Aprile','Maggio','Giugno','Luglio','Agosto','Settembre','Ottobre','Novembre','Dicembre'].map((x,i)=>`<option value="${i+1}">${x}</option>`).join('')}</select>`}
-function jobTotal(j){return db.interventions.filter(i=>i.jobId===j.id).reduce((s,i)=>s+(Number(i.cost)||0),0)}
-function jobExpenses(j){return db.interventions.filter(i=>i.jobId===j.id).reduce((s,i)=>s+db.expenses.filter(e=>e.intId===i.id).reduce((a,e)=>a+(Number(e.amount)||0),0),0)}
+function jobTotal(j){return IDX.jobTotal.get(j.id)||0}
+function jobExpenses(j){return IDX.jobExpenses.get(j.id)||0}
 function jobTax(j){return jobTotal(j)*(Number(j.taxRate)||0)/100}
 function jobProfit(j){return jobTotal(j)-jobExpenses(j)-jobTax(j)}
-function jobPayments(j){return db.payments.filter(p=>p.jobId===j.id).reduce((s,p)=>s+(Number(p.amount)||0),0)}
+function jobPayments(j){return IDX.jobPayments.get(j.id)||0}
 function jobToCollect(j){return jobTotal(j)-jobPayments(j)}
 function paymentStatus(j){let due=jobToCollect(j);return due<=0?'🟢 Pagato':jobPayments(j)>0?'🟠 Parzialmente pagato':'🔴 Da incassare'}
-function clientName(id){return db.clients.find(c=>c.id===id)?.name||'—'}
-function catName(id){let c=db.cats.find(c=>c.id===id);return c?c.desc:'—'}
+function clientName(id){return IDX.clients.get(id)?.name||'—'}
+function catName(id){let c=IDX.cats.get(id);return c?c.desc:'—'}
 function render(){let tab=document.querySelector('.tabs .active')?.dataset.tab||'home'; if(tab==='home')home();else if(tab==='jobs')jobs();else if(tab==='anagrafica')anagrafica();else more()}
-function filteredInterventions(){let q=(document.getElementById('globalSearch')?.value||'').trim().toLowerCase();let terms=q.split(/\s+/).filter(Boolean);let arr=db.interventions.filter(i=>{let j=db.jobs.find(x=>x.id===i.jobId)||{};let c=db.clients.find(x=>x.id===j.clientId)||{};let sub=db.clients.find(x=>x.id===i.subclientId)||{};let cat=db.cats.find(x=>x.id===i.catId)||{};let exps=db.expenses.filter(e=>e.intId===i.id);let pays=db.payments.filter(p=>p.jobId===i.jobId);let hay=[i.num,i.date,i.start,i.end,i.request,i.work,i.minutes,i.attachment?.name||'',j.num,j.date,j.status,j.invoice?'fattura':'no fattura',c.name,c.city,c.street,c.fraz,c.branch,c.close,sub.name,sub.city,sub.street,sub.fraz,sub.branch,sub.close,cat.code,cat.desc,...exps.flatMap(e=>[e.desc,e.amount]),...pays.flatMap(x=>[x.date,x.amount,x.method,x.note])].join(' ').toLowerCase();return !terms.length||terms.every(term=>hay.includes(term))});return arr.sort((a,b)=>{let d=(b.date||'').localeCompare(a.date||'');return d||((Number(b.num)||0)-(Number(a.num)||0))})}
-function interventionCard(i){let j=db.jobs.find(x=>x.id===i.jobId)||{};let sub=db.clients.find(c=>c.id===i.subclientId)||{};let hasAttachment=!!i.attachment?.data;return `<div class="item" onclick="editInt('${i.id}')"><div class="row"><div><b>${esc(sub.name||'Nessun sottocliente')}</b><div class="muted">${esc(sub.city||'')} ${sub.city&&sub.street?'· ':''}${esc(sub.street||'')}</div></div><span class="amount">${euro(i.cost)}</span></div><div class="search-result-meta muted">Lavoro #${esc(j.num||'—')} · ${esc(i.date||'')} · ${esc(clientName(j.clientId))} · ${paymentStatus(j)} ${hasAttachment?'· 📎':''}</div><div class="muted">${esc(catName(i.catId))}${i.request?' · '+esc(i.request):''}</div></div>`}
+function filteredInterventions(){let q=(document.getElementById('globalSearch')?.value||'').trim().toLowerCase();let terms=q.split(/\s+/).filter(Boolean);let arr=db.interventions.filter(i=>{let j=IDX.jobs.get(i.jobId)||{};let c=IDX.clients.get(j.clientId)||{};let sub=IDX.clients.get(i.subclientId)||{};let cat=IDX.cats.get(i.catId)||{};let exps=IDX.expensesByInt.get(i.id)||[];let pays=IDX.paymentsByJob.get(i.jobId)||[];let hay=[i.num,i.date,i.start,i.end,i.request,i.work,i.minutes,i.attachment?.name||'',j.num,j.date,j.status,j.invoice?'fattura':'no fattura',c.name,c.city,c.street,c.fraz,c.branch,c.close,sub.name,sub.city,sub.street,sub.fraz,sub.branch,sub.close,cat.code,cat.desc,...exps.flatMap(e=>[e.desc,e.amount]),...pays.flatMap(x=>[x.date,x.amount,x.method,x.note])].join(' ').toLowerCase();return !terms.length||terms.every(term=>hay.includes(term))});return arr.sort((a,b)=>{let d=(b.date||'').localeCompare(a.date||'');return d||((Number(b.num)||0)-(Number(a.num)||0))})}
+function interventionCard(i){let j=IDX.jobs.get(i.jobId)||{};let sub=IDX.clients.get(i.subclientId)||{};let hasAttachment=!!i.attachment?.data;let ist=i.status||'';return `<div class="item" onclick="editInt('${i.id}')"><div class="row"><div><b>${esc(sub.name||'Nessun sottocliente')}</b><div class="muted">${esc(sub.city||'')} ${sub.city&&sub.street?'· ':''}${esc(sub.street||'')}</div></div><span class="amount">${euro(i.cost)}</span></div><div class="search-result-meta muted">Lavoro #${esc(j.num||'—')} · ${esc(i.date||'')} · ${esc(clientName(j.clientId))} · ${paymentStatus(j)} ${hasAttachment?'· 📎':''}</div><div class="muted">${esc(catName(i.catId))}${i.request?' · '+esc(i.request):''}${ist?` · <span class="status-closed">${esc(ist)}${i.closureStatus?' · '+esc(i.closureStatus):''}</span>`:''}</div></div>`}
 function renderHomeRecent(){let arr=db.interventions.slice().sort((a,b)=>(b.date||'').localeCompare(a.date||'')||((Number(b.num)||0)-(Number(a.num)||0))).slice(0,5);let el=document.getElementById('homeRecent');if(!el)return;el.innerHTML=arr.map(interventionCard).join('')||'<div class="empty">Nessun intervento registrato.</div>'}
 function newIntChooser(){if(!db.jobs.length){modal('<h2>Nuovo intervento</h2><div class="card">Prima devi creare almeno un lavoro.</div><div class="actions"><button class="primary" onclick="closeModal();newJob()">＋ Nuovo lavoro</button></div>');return}let opts=db.jobs.slice().sort((a,b)=>(b.date||'').localeCompare(a.date||'')||((Number(b.num)||0)-(Number(a.num)||0))).map(j=>`<option value="${j.id}">#${esc(j.num)} · ${esc(clientName(j.clientId))} · ${esc(j.date||'')}</option>`).join('');modal(`<h2>Nuovo intervento</h2><div class="field"><label>Lavoro</label><select id="chooserJob">${opts}</select></div><div class="actions"><button class="secondary" onclick="closeModal()">Annulla</button><button class="primary" onclick="chooseNewInt()">Continua</button></div>`)}
 function chooseNewInt(){let id=document.getElementById('chooserJob')?.value;if(id){closeModal();newInt(id)}}
@@ -103,7 +127,7 @@ function filteredJobs(){let y=document.getElementById('fy')?.value||'all',m=docu
 function jobs(){let arr=filteredJobs(),fixed=db.jobs.filter(j=>j.fixed).sort((a,b)=>(b.date||'').localeCompare(a.date||'')||((Number(b.num)||0)-(Number(a.num)||0)));document.getElementById('app').innerHTML=`<div class="row"><div class="section">Lavori</div><button class="primary" id="newJobBtn" type="button">＋ Nuovo lavoro</button></div><div class="section">📌 Lavori fissati</div><div class="list">${fixed.map(j=>jobCard(j,true)).join('')||'<div class="empty">Nessun lavoro fissato.</div>'}</div><div class="section">Tutti i lavori</div><div class="section">Filtra lavori per periodo</div><div class="filters">${yearFilter()}${monthFilter()}</div><div class="list" style="margin-top:12px">${arr.map(jobCard).join('')||'<div class="empty">Nessun lavoro trovato.</div>'}</div>`;document.getElementById('fy').onchange=jobs;document.getElementById('fm').onchange=jobs}
 function anagrafica(section='clients'){document.getElementById('app').innerHTML=`<div class="section">Anagrafica</div><div class="row"><button class="${section==='clients'?'primary':'secondary'}" onclick="anagrafica('clients')">👥 Clienti</button><button class="${section==='cats'?'primary':'secondary'}" onclick="anagrafica('cats')">🏷️ Categorie</button></div><div style="margin-top:16px"></div>${section==='clients'?clientsContent():categoriesContent()}`}
 function clients(){anagrafica('clients')}
-function clientsContent(){return `<div class="row"><div class="section">Clienti</div><button class="primary" onclick="newClient()">＋ Cliente</button></div><div class="list">${db.clients.map(c=>`<div class="item"><b>${esc(c.name)}</b><div class="muted">${esc(c.city)} · ${esc(c.street)} · ${esc(c.branch||'')}</div><div class="muted">Frazionario: ${esc(c.fraz)} · Chiusura: ${esc(c.close||'')}</div><div class="actions"><button class="secondary" onclick="editClient('${c.id}')">✏️ Modifica</button><button class="danger" onclick="deleteClient('${c.id}')">🗑️ Elimina</button></div></div>`).join('')||'<div class="empty">Inserisci il primo cliente.</div>'}</div>`}
+function clientsContent(){let cs=db.clients.slice().sort((a,b)=>(a.name||'').localeCompare(b.name||'','it',{sensitivity:'base'})||(a.city||'').localeCompare(b.city||'','it',{sensitivity:'base'})||(a.street||'').localeCompare(b.street||'','it',{sensitivity:'base'}));return `<div class="row"><div class="section">Clienti</div><button class="primary" onclick="newClient()">＋ Cliente</button></div><div class="list">${cs.map(c=>`<div class="item"><b>${esc(c.name)}</b><div class="muted">${esc(c.city||'')}${c.city&&c.street?' / ':''}${esc(c.street||'')}</div><div class="muted">Frazionario: ${esc(c.fraz)} · Chiusura: ${esc(c.close||'')}</div><div class="actions"><button class="secondary" onclick="editClient('${c.id}')">✏️ Modifica</button><button class="danger" onclick="deleteClient('${c.id}')">🗑️ Elimina</button></div></div>`).join('')||'<div class="empty">Inserisci il primo cliente.</div>'}</div>`}
 function categoriesContent(){return `<div class="section">Categorie intervento</div><div class="card"><button class="primary" onclick="newCat()">＋ Nuova categoria</button></div><div class="list">${db.cats.map(c=>`<div class="item"><div class="row"><b>${esc(c.code)}</b><span class="amount">${euro(c.amount)}</span></div><div>${esc(c.desc)}</div><div class="actions"><button class="secondary" onclick="editCat('${c.id}')">✏️ Modifica</button><button class="danger" onclick="deleteCat('${c.id}')">🗑️ Elimina</button></div></div>`).join('')||'<div class="empty">Nessuna categoria.</div>'}</div>`}
 function editClient(id){let c=db.clients.find(x=>x.id===id);if(!c)return;modal(`<h2>Modifica cliente</h2>${[['cn','Nome',c.name],['city','Città',c.city],['street','Via',c.street],['fraz','Frazionario',c.fraz],['branch','Numero filiale',c.branch],['close','Orario chiusura',c.close]].map(x=>`<div class="field"><label>${x[1]}</label><input id="${x[0]}" value="${esc(x[2]||'')}"></div>`).join('')}<div class="actions"><button class="secondary" onclick="closeModal();clients()">Annulla</button><button class="primary" onclick="saveEditClient('${id}')">Salva</button></div>`)}
 function saveEditClient(id){let c=db.clients.find(x=>x.id===id);if(!c)return;['cn','city','street','fraz','branch','close'].forEach((k,idx)=>{let v=document.getElementById(k)?.value||'';c[['name','city','street','fraz','branch','close'][idx]]=v});save();closeModal();clients()}
@@ -256,11 +280,53 @@ function resetAllData(){
   if(!confirm('Confermi definitivamente la cancellazione di tutti i lavori, interventi, spese, pagamenti, clienti e categorie?'))return;
   localStorage.setItem('backup_pre_reset',JSON.stringify(db));
   db={clients:[],cats:[],jobs:[],interventions:[],expenses:[],payments:[],seqJob:0,seqInt:0};
-  save();render();
+  rebuildIndexes();save();render();
   alert('Database cancellato. Ora puoi importare il nuovo database Ninox.');
 }
 function importDB(e){let f=e.target.files[0];if(!f)return;let r=new FileReader();r.onload=()=>{try{let x=JSON.parse(r.result);if(!x||!Array.isArray(x.jobs)||!Array.isArray(x.interventions)||!Array.isArray(x.clients)){throw new Error('struttura')}db={clients:x.clients||[],cats:x.cats||[],jobs:x.jobs||[],interventions:x.interventions||[],expenses:x.expenses||[],payments:x.payments||[],seqJob:x.seqJob||0,seqInt:x.seqInt||0};save();render();alert('Backup importato correttamente.')}catch(_){alert('Backup non valido o danneggiato.')}};r.readAsText(f)}
 
+
+function migrateOldUnpaidInterventions(){
+  if(localStorage.getItem('ninox_close_before_20261001_v1')==='1')return;
+  const cutoff='2026-10-01';
+  const totals=new Map(), paid=new Map();
+  db.interventions.forEach(i=>totals.set(i.jobId,(totals.get(i.jobId)||0)+(Number(i.cost)||0)));
+  db.payments.forEach(p=>paid.set(p.jobId,(paid.get(p.jobId)||0)+(Number(p.amount)||0)));
+  let added=0, completed=0;
+  const byJob=new Map();
+  db.interventions.forEach(i=>{if(!byJob.has(i.jobId))byJob.set(i.jobId,[]);byJob.get(i.jobId).push(i)});
+  byJob.forEach((arr,jobId)=>{
+    let remaining=Math.max(0,(totals.get(jobId)||0)-(paid.get(jobId)||0));
+    if(remaining<=0)return;
+    arr.slice().sort((a,b)=>(a.date||'').localeCompare(b.date||'')||((Number(a.num)||0)-(Number(b.num)||0))).forEach(i=>{
+      if(remaining<=0||!i.date||i.date>=cutoff||Number(i.cost)<=0)return;
+      const amount=Math.min(Number(i.cost)||0,remaining);
+      if(amount<=0)return;
+      db.payments.push({
+        id:'pay_auto_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,8),
+        jobId:jobId,intId:i.id,date:i.date,amount:amount,
+        method:'Regolarizzazione',
+        note:'Pagamento aggiunto automaticamente per intervento precedente al 01/10/2026'
+      });
+      i.status='Completato';
+      i.closureStatus='Chiuso';
+      i.paymentStatus='Pagato';
+      remaining-=amount;added++;
+      if(amount>=Number(i.cost)||remaining<0.01)completed++;
+    });
+    if(remaining<=0.01){
+      const job=IDX.jobs.get(jobId)||db.jobs.find(j=>j.id===jobId);
+      if(job){
+        const all=byJob.get(jobId)||[];
+        if(all.length && all.every(i=>i.date && i.date<cutoff && (i.status==='Completato'||Number(i.cost)<=0)))job.status='Chiuso';
+      }
+    }
+  });
+  localStorage.setItem('ninox_close_before_20261001_v1','1');
+  rebuildIndexes();
+  if(added) localStorage.setItem('ninox_close_before_20261001_stats',JSON.stringify({added,completed}));
+  localStorage.setItem(KEY,JSON.stringify(db));
+}
 
 function loadEmbeddedNinox(force){
   try{
@@ -284,7 +350,7 @@ function loadEmbeddedNinox(force){
       if(typeof j.status!=='string')j.status='Aperto';
     });
     localStorage.setItem('ninox_v24_imported','1');
-    save();
+    rebuildIndexes();save();
     render();
     return true;
   }catch(e){
@@ -301,5 +367,5 @@ function autoImportNinox(){
   }
 }
 
-document.addEventListener('DOMContentLoaded',()=>{const tabs=document.querySelectorAll('.tabs button');tabs.forEach(b=>b.addEventListener('click',()=>{tabs.forEach(x=>x.classList.remove('active'));b.classList.add('active');render()}));const search=document.getElementById('globalSearch');if(search)search.addEventListener('input',()=>{if(search.value.trim())searchResults();else render()});const fab=document.getElementById('fab');if(fab){fab.onclick=null;fab.addEventListener('click',function(ev){ev.preventDefault();ev.stopPropagation();newJob();});}document.addEventListener('click',function(ev){const b=ev.target.closest&&ev.target.closest('#newJobBtn');if(b){ev.preventDefault();newJob();}});const modalEl=document.getElementById('modal');if(modalEl)modalEl.addEventListener('click',e=>{if(e.target===modalEl)closeModal()});autoImportNinox();render();});
+document.addEventListener('DOMContentLoaded',()=>{const tabs=document.querySelectorAll('.tabs button');tabs.forEach(b=>b.addEventListener('click',()=>{tabs.forEach(x=>x.classList.remove('active'));b.classList.add('active');render()}));const search=document.getElementById('globalSearch');if(search)search.addEventListener('input',()=>{if(search.value.trim())searchResults();else render()});const fab=document.getElementById('fab');if(fab){fab.onclick=null;fab.addEventListener('click',function(ev){ev.preventDefault();ev.stopPropagation();newJob();});}document.addEventListener('click',function(ev){const b=ev.target.closest&&ev.target.closest('#newJobBtn');if(b){ev.preventDefault();newJob();}});const modalEl=document.getElementById('modal');if(modalEl)modalEl.addEventListener('click',e=>{if(e.target===modalEl)closeModal()});autoImportNinox();rebuildIndexes();migrateOldUnpaidInterventions();rebuildIndexes();render();});
 </script></body></html>
