@@ -48,7 +48,7 @@ function saveHomeFilters(){let keep=document.getElementById('rememberFilters')?.
 function restoreHomeFilters(){let s=getSavedHomeFilters();if(!s.remember)return;const vals={fy:s.fy,fm:s.fm,fclient:s.fclient,fstatus:s.fstatus,fpayment:s.fpayment};Object.entries(vals).forEach(([id,v])=>{let el=document.getElementById(id);if(el&&v!=null)el.value=v});let cb=document.getElementById('rememberFilters');if(cb)cb.checked=true}
 function toggleHomeFilters(){let box=document.getElementById('homeFilters');if(box)box.classList.toggle('hidden')}
 function home(){let app=document.getElementById('app');app.innerHTML=`<div class="dashboard-logo"><img src="logo.jpeg" alt="DG Servizi Tecnologici di Davide Geraci"></div><button type="button" class="collect-button" onclick="showToCollect()">💳 Da incassare</button><div style="margin-top:10px"><button type="button" class="filter-button" onclick="toggleHomeFilters()">🔎 Filtri</button></div><div id="homeFilters" class="card hidden" style="margin-top:10px"><div class="section" style="margin-top:0">Filtra riepilogo</div><label class="row" style="justify-content:flex-start;gap:8px;margin:4px 0 10px"><input id="rememberFilters" type="checkbox" style="width:auto;flex:none"><span><b>Mantieni in memoria i filtri</b></span></label><div class="filters">${yearFilter()}${monthFilter()}</div><div class="field"><label>Cliente / Sottocliente</label>${clientSubclientFilter()}<div class="muted" style="margin-top:5px">👤 Cliente = importo lavori · ↳ Sottocliente = importo interventi</div></div><div class="filters"><div class="field"><label>Stato lavoro</label>${workStatusFilter()}</div><div class="field"><label>Stato pagamento</label>${paymentStatusFilter()}</div></div></div><div class="quick-actions"><button class="primary" type="button" onclick="newJob()">＋ Nuovo lavoro</button><button class="secondary" type="button" onclick="newIntChooser()">🔧 Nuovo intervento</button></div><div class="section">Riepilogo</div><div class="grid" id="metrics"></div><div class="section">Andamento guadagni</div><div class="chart" id="chart"></div><div class="section">Ultimi interventi</div><div id="homeRecent" class="list"></div>`;restoreHomeFilters();['fy','fm','fclient','fstatus','fpayment'].forEach(id=>{let el=document.getElementById(id);if(el)el.onchange=()=>{saveHomeFilters();updateDash()}});let remember=document.getElementById('rememberFilters');if(remember)remember.onchange=()=>{saveHomeFilters();updateDash()};updateDash();renderHomeRecent()}
-function showToCollect(){let js=getPeriodJobs().filter(j=>jobToCollect(j)>0).sort((a,b)=>(b.date||'').localeCompare(a.date||'')||((Number(b.num)||0)-(Number(a.num)||0)));let body=js.map(j=>`<div class="item" onclick="openJob('${j.id}')"><div class="row"><div><b>${esc(clientName(j.clientId))}</b><div class="muted">Lavoro #${esc(j.num)} · ${esc(j.date||'')} · ${paymentStatus(j)}</div></div><div style="text-align:right"><div class="amount" style="color:#dc2626">${euro(jobToCollect(j))}</div><div class="muted">da incassare</div></div></div></div>`).join('');modal(`<h2>💳 Da incassare</h2><div class="muted" style="margin-bottom:12px">Lavori non pagati o parzialmente pagati${js.length?' · '+js.length+' lavoro'+(js.length===1?'':'i'):''}.</div><div class="list">${body||'<div class="empty">Nessun lavoro da incassare.</div>'}</div><div class="actions"><button class="primary" onclick="closeModal()">Chiudi</button></div>`)}
+function showToCollect(){let js=db.jobs.filter(j=>jobToCollect(j)>0).sort((a,b)=>(b.date||'').localeCompare(a.date||'')||((Number(b.num)||0)-(Number(a.num)||0)));let body=js.map(j=>`<div class="item" onclick="openJob('${j.id}')"><div class="row"><div><b>${esc(clientName(j.clientId))}</b><div class="muted">Lavoro #${esc(j.num)} · ${esc(j.date||'')} · ${paymentStatus(j)}</div></div><div style="text-align:right"><div class="amount" style="color:#dc2626">${euro(jobToCollect(j))}</div><div class="muted">da incassare</div></div></div></div>`).join('');modal(`<h2>💳 Da incassare</h2><div class="muted" style="margin-bottom:12px">Lavori non pagati o parzialmente pagati${js.length?' · '+js.length+' lavoro'+(js.length===1?'':'i'):''}.</div><div class="list">${body||'<div class="empty">Nessun lavoro da incassare.</div>'}</div><div class="actions"><button class="primary" onclick="closeModal()">Chiudi</button></div>`)}
 function getPeriodJobs(){let y=document.getElementById('fy')?.value||'all',m=document.getElementById('fm')?.value||'all',c=document.getElementById('fclient')?.value||'all',st=document.getElementById('fstatus')?.value||'all',ps=document.getElementById('fpayment')?.value||'all';return db.jobs.filter(j=>{let d=new Date((j.date||'')+'T00:00:00');let clientOk=c==='all'||(c.startsWith('c:')?j.clientId===c.slice(2):c.startsWith('s:')?db.interventions.some(i=>i.jobId===j.id&&i.subclientId===c.slice(2)):false);let statusOk=st==='all'||(j.status||'Aperto')===st;let due=jobToCollect(j);let pay=jobPayments(j);let payOk=ps==='all'||(ps==='paid'?due<=0:(ps==='partial'?pay>0&&due>0:(ps==='unpaid'?pay<=0&&due>0:false)));return (y==='all'||d.getFullYear()==y)&&(m==='all'||d.getMonth()+1==m)&&clientOk&&statusOk&&payOk})}
 function updateDash(){
   let js=getPeriodJobs();
@@ -150,22 +150,75 @@ function asciiBytes(str){return new TextEncoder().encode(str)}
 function concatBytes(parts){let n=parts.reduce((s,p)=>s+p.length,0),o=new Uint8Array(n),i=0;for(const p of parts){o.set(p,i);i+=p.length}return o}
 function pdfEscape(str){return String(str).replace(/\\/g,'\\\\').replace(/\(/g,'\\(').replace(/\)/g,'\\)')}
 function wrapPdfLine(str,max=88){let s=String(str??'').replace(/\s+/g,' ').trim();if(!s)return [''];let out=[];while(s.length>max){let cut=s.lastIndexOf(' ',max);if(cut<30)cut=max;out.push(s.slice(0,cut));s=s.slice(cut).trim()}if(s)out.push(s);return out}
+function pdfColor(r,g,b){return `${r} ${g} ${b}`}
+function pdfColor(r,g,b){return `${r} ${g} ${b}`}
 function buildPdf(title,lines,imgBytes,imgW=853,imgH=178){
-  const W=595,H=842,margin=42,leading=15,maxChars=88,pages=[];let cur=[];let y=H-margin;
-  function addLine(text,size=10,bold=false,indent=0){for(const ln of wrapPdfLine(text,maxChars)){if(y<55){pages.push(cur);cur=[];y=H-margin}cur.push({text:ln,size,bold,x:margin+indent,y});y-=leading+(size>12?3:0)}}
-  if(imgBytes){cur.push({image:true,x:margin,y:748,w:300,h:62});y=720}
-  addLine(title,18,true);y-=4;
-  for(const line of lines){if(line===''){y-=7;continue}if(line.startsWith('## ')){y-=4;addLine(line.slice(3),13,true)}else if(line.startsWith('### ')){addLine(line.slice(4),11,true)}else addLine(line,10,false)}
-  if(cur.length)pages.push(cur);
-  const objs=[]; const put=(b)=>{objs.push(b);return objs.length};
-  put(asciiBytes('<< /Type /Catalog /Pages 2 0 R >>')); // 1
-  put(null); // 2 pages later
-  put(asciiBytes('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>')); //3
-  let imgObj=0;if(imgBytes){imgObj=put(concatBytes([asciiBytes(`<< /Type /XObject /Subtype /Image /Width ${imgW} /Height ${imgH} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${imgBytes.length} >>\nstream\n`),imgBytes,asciiBytes('\nendstream')]));}
-  const pageRefs=[];
-  for(const page of pages){let contentParts=[];if(page.some(x=>x.image)){contentParts.push(asciiBytes(`q ${page.find(x=>x.image).w} 0 0 ${page.find(x=>x.image).h} ${page.find(x=>x.image).x} ${page.find(x=>x.image).y} cm /Im1 Do Q\n`))}for(const item of page){if(item.image)continue;let font=item.bold?13:item.size;contentParts.push(cp1252Bytes(`BT /F1 ${font} Tf ${item.x} ${item.y} Td (${pdfEscape(item.text)}) Tj ET\n`))}let stream=concatBytes(contentParts);let c=put(concatBytes([asciiBytes(`<< /Length ${stream.length} >>\nstream\n`),stream,asciiBytes('endstream')]));let res=`<< /Font << /F1 3 0 R >>`;if(imgObj)res+=` /XObject << /Im1 ${imgObj} 0 R >>`;res+=' >>';let p=put(asciiBytes(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${W} ${H}] /Resources ${res} /Contents ${c} 0 R >>`));pageRefs.push(p)}
-  objs[1]=asciiBytes(`<< /Type /Pages /Kids [${pageRefs.map(n=>n+' 0 R').join(' ')}] /Count ${pageRefs.length} >>`);
-  let header=asciiBytes('%PDF-1.4\n%\xE2\xE3\xCF\xD3\n'),chunks=[header],offsets=[0],pos=header.length;for(let i=0;i<objs.length;i++){let pre=asciiBytes(`${i+1} 0 obj\n`),body=objs[i],post=asciiBytes('\nendobj\n');offsets.push(pos);chunks.push(pre,body,post);pos+=pre.length+body.length+post.length}let xrefPos=pos;let xref=`xref\n0 ${objs.length+1}\n0000000000 65535 f \n`;for(let i=1;i<=objs.length;i++)xref+=String(offsets[i]).padStart(10,'0')+' 00000 n \n';xref+=`trailer\n<< /Size ${objs.length+1} /Root 1 0 R >>\nstartxref\n${xrefPos}\n%%EOF`;chunks.push(asciiBytes(xref));return concatBytes(chunks)
+  const W=595,H=842,margin=42,contentW=W-margin*2,top=775,bottom=52;
+  const blue=pdfColor(.08,.31,.55),light=pdfColor(.93,.96,.99),dark=pdfColor(.12,.15,.18),muted=pdfColor(.35,.40,.46);
+  const pages=[];let page={items:[]};let y=top;
+  function newPage(){if(page.items.length)pages.push(page);page={items:[]};y=top;}
+  function need(h=18){if(y-h<bottom)newPage()}
+  function rect(x,yy,w,h,fill){page.items.push({type:'rect',x,y:yy,w,h,fill})}
+  function line(x1,y1,x2,y2,c=muted){page.items.push({type:'line',x1,y1,x2,y2,c})}
+  function text(t,x,yy,size=10,bold=false,c=dark){page.items.push({type:'text',text:String(t),x,y:yy,size,bold,c})}
+  function addWrapped(t,size=10,bold=false,x=margin,max=86,c=dark){for(const ln of wrapPdfLine(t,max)){need(size+7);text(ln,x,y,size,bold,c);y-=size+6}}
+  function section(t){need(30);y-=5;rect(margin,y-4,contentW,22,light);text(t.toUpperCase(),margin+9,y+3,10,true,blue);y-=28}
+  function keyValue(label,value){need(24);text(label,margin+9,y,9,true,muted);text(String(value||'—'),margin+125,y,10,false,dark);y-=17}
+
+  if(imgBytes){need(70);page.items.push({type:'image',x:margin,y:755,w:245,h:51})}
+  text('DG SERVIZI TECNOLOGICI',350,764,9,true,blue)
+  text('di Davide Geraci',350,749,8,false,muted)
+  line(margin,735,W-margin,735,blue);y=712
+  addWrapped(title,19,true,margin,52,blue);y-=4
+
+  for(const raw of lines){const lineText=String(raw??'')
+    if(lineText===''){y-=7;continue}
+    if(lineText.startsWith('## ')){section(lineText.slice(3));continue}
+    if(lineText.startsWith('### ')){need(30);addWrapped(lineText.slice(4),11,true,margin,78,blue);line(margin,y+1,W-margin,y+1,light);y-=8;continue}
+    if(/^[-•] /.test(lineText)){addWrapped('• '+lineText.replace(/^[-•] /,''),9.5,false,margin+8,80,dark);continue}
+    const kv=lineText.match(/^([^:]{1,35}):\s*(.*)$/)
+    if(kv && !lineText.startsWith('Categoria:') && !lineText.startsWith('Tempo:') && !lineText.startsWith('Richiesta:') && !lineText.startsWith('Lavoro svolto:') && !lineText.startsWith('Spese:')){keyValue(kv[1],kv[2]);continue}
+    addWrapped(lineText,9.5,false,margin+2,82,dark)
+  }
+  if(page.items.length)pages.push(page)
+
+  const objs=[];const put=b=>{objs.push(b);return objs.length}
+  put(asciiBytes('<< /Type /Catalog /Pages 2 0 R >>'))
+  put(null)
+  put(asciiBytes('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>'))
+  put(asciiBytes('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>'))
+  let imgObj=0
+  if(imgBytes){imgObj=put(concatBytes([asciiBytes(`<< /Type /XObject /Subtype /Image /Width ${imgW} /Height ${imgH} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${imgBytes.length} >>\nstream\n`),imgBytes,asciiBytes('\nendstream')]))}
+  const pageRefs=[]
+  pages.forEach((pg,idx)=>{
+    const cp=[]
+    if(imgObj){const im=pg.items.find(x=>x.type==='image');if(im)cp.push(asciiBytes(`q ${im.w} 0 0 ${im.h} ${im.x} ${im.y} cm /Im1 Do Q\n`))}
+    for(const it of pg.items){
+      if(it.type==='image')continue
+      if(it.type==='rect'){cp.push(asciiBytes(`${it.fill} rg ${it.x} ${it.y} ${it.w} ${it.h} re f\n`));continue}
+      if(it.type==='line'){cp.push(asciiBytes(`${it.c} RG 0.7 w ${it.x1} ${it.y1} m ${it.x2} ${it.y2} l S\n`));continue}
+      const font=it.bold?4:3
+      cp.push(cp1252Bytes(`BT /F${font} ${it.size} Tf ${it.c} rg ${it.x} ${it.y} Td (${pdfEscape(it.text)}) Tj ET\n`))
+    }
+    cp.push(asciiBytes(`${muted} RG 0.5 w ${margin} 39 m ${W-margin} 39 l S\n`))
+    cp.push(asciiBytes(`BT /F1 8 Tf ${muted} rg ${margin} 26 Td (DG Servizi Tecnologici - Documento generato dal gestionale) Tj ET\n`))
+    cp.push(asciiBytes(`BT /F1 8 Tf ${muted} rg ${W-87} 26 Td (Pagina ${idx+1} di ${pages.length}) Tj ET\n`))
+    const stream=concatBytes(cp)
+    const c=put(concatBytes([asciiBytes(`<< /Length ${stream.length} >>\nstream\n`),stream,asciiBytes('\nendstream')]))
+    let res=`<< /Font << /F1 3 0 R /F2 4 0 R >>`
+    if(imgObj)res+=` /XObject << /Im1 ${imgObj} 0 R >>`
+    res+=' >>'
+    const pr=put(asciiBytes(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${W} ${H}] /Resources ${res} /Contents ${c} 0 R >>`))
+    pageRefs.push(pr)
+  })
+  objs[1]=asciiBytes(`<< /Type /Pages /Kids [${pageRefs.map(n=>n+' 0 R').join(' ')}] /Count ${pageRefs.length} >>`)
+  const header=asciiBytes('%PDF-1.4\n%\xE2\xE3\xCF\xD3\n'),chunks=[header],offsets=[0];let pos=header.length
+  for(let i=0;i<objs.length;i++){const pre=asciiBytes(`${i+1} 0 obj\n`),body=objs[i],post=asciiBytes('\nendobj\n');offsets.push(pos);chunks.push(pre,body,post);pos+=pre.length+body.length+post.length}
+  const xrefPos=pos
+  let xref=`xref\n0 ${objs.length+1}\n0000000000 65535 f \n`
+  for(let i=1;i<=objs.length;i++)xref+=String(offsets[i]).padStart(10,'0')+' 00000 n \n'
+  xref+=`trailer\n<< /Size ${objs.length+1} /Root 1 0 R >>\nstartxref\n${xrefPos}\n%%EOF`
+  chunks.push(asciiBytes(xref));return concatBytes(chunks)
 }
 async function fetchLogoBytes(){try{let r=await fetch('logo.jpeg',{cache:'no-store'});if(!r.ok)return null;return new Uint8Array(await r.arrayBuffer())}catch(_){return null}}
 async function downloadPDF(title,lines){let img=await fetchLogoBytes();let bytes=buildPdf(title,lines,img);let blob=new Blob([bytes],{type:'application/pdf'});let url=URL.createObjectURL(blob);let a=document.createElement('a');a.href=url;a.download=(title||'documento').replace(/[^a-z0-9àèéìòù _-]/gi,'').replace(/\s+/g,'-')+'.pdf';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),2000)}
